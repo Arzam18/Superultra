@@ -1,45 +1,51 @@
-# Variables
-CXX = g++
-CXXFLAGS = -std=c++17 -O3 -funroll-loops -ffast-math -ftree-vectorize -ftree-loop-vectorize -Wall -Wextra -flto
-SRC = $(wildcard *.cpp)
-OBJ = $(SRC:.cpp=.o)
-DEP = $(SRC:.cpp=.d)
-
-# Example: "make ARCH=skylake-avx512"
-ARCH ?= native
+CXXFLAGS_COMMON = -std=c++17 -O3 -funroll-loops -ffast-math -Wall -Wextra -flto
 
 ifeq ($(ARCH),android-neon)
-	ARCHFLAGS = -march=armv8-a+simd -mtune=cortex-a76
+    CXXFLAGS = $(CXXFLAGS_COMMON) \
+               -march=armv8-a+simd \
+               -mtune=cortex-a76 \
+               -MMD -MP
+
+    LDFLAGS = -flto -static-libstdc++ -static-libgcc
+
+    TARGET = Superultra-2.1
 else
-	ARCHFLAGS = -march=$(ARCH) -mtune=$(ARCH)
+    CXXFLAGS = $(CXXFLAGS_COMMON) \
+               -march=native \
+               -MMD -MP
+
+    LDFLAGS = -flto
+
+    TARGET = Superultra-2.1
 endif
 
-# Android uses the NDK C++ runtime and does not support the desktop -static
-# link used by the original Makefile.
-ifeq ($(ANDROID),1)
-	LDFLAGS = -static-libstdc++ -Wl,-z,stack-size=8388608
-	NAME = Superultra-2.1-android-arm64
-	RM = rm -f
-else ifeq ($(OS), Windows_NT)
-	LDFLAGS = -Wl,--stack=8388608,--no-whole-archive -static
-	NAME = Superultra-2.1.exe
-	RM = del -f
-else
-	LDFLAGS = -Wl,--no-whole-archive -static
-	NAME = Superultra-2.1
-	RM = rm -f
-endif
+SOURCES = attacks.cpp \
+          eval.cpp \
+          main.cpp \
+          movegen.cpp \
+          movemake.cpp \
+          movescore.cpp \
+          nnue.cpp \
+          search.cpp \
+          see.cpp \
+          timecontrol.cpp \
+          tt.cpp \
+          uci.cpp
 
-# All .o ---> executable
-$(NAME): $(OBJ)
-	$(CXX) $(CXXFLAGS) $(ARCHFLAGS) $(LDFLAGS) -pthread -o $@ $^
+OBJECTS = $(SOURCES:.cpp=.o)
+DEPS = $(OBJECTS:.o=.d)
 
-# .cpp ---> .o
+.PHONY: all clean
+
+all: $(TARGET)
+
+$(TARGET): $(OBJECTS)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $(OBJECTS)
+
 %.o: %.cpp
-	$(CXX) $(CXXFLAGS) $(ARCHFLAGS) -MMD -MP -c -o $@ $<
+	$(CXX) $(CXXFLAGS) -MMD -MP -c -o $@ $<
 
-.PHONY: clean
+-include $(DEPS)
+
 clean:
-	$(RM) $(OBJ) $(DEP) $(NAME)
-
--include $(DEP)
+	rm -f $(OBJECTS) $(DEPS) $(TARGET)
