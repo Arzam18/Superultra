@@ -15,14 +15,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Android NDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install NDK 27.2.12479018
+      - name: Install Android NDK 27.2.12479018
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platform-tools" "platforms;android-24" "build-tools;35.0.0" "ndk;27.2.12479018"
+          set -eux
+          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-24" "build-tools;35.0.0" "ndk;27.2.12479018"
 
       - name: Locate Android NDK
         id: ndk
