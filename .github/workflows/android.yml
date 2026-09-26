@@ -24,11 +24,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Do NOT use android-actions/setup-android@v3 here.
-      # The current GitHub runner already contains the Android SDK,
-      # and setup-android@v3 can try to install the obsolete "tools"
-      # package and fail with:
-      #   Warning: Failed to find package 'tools'
       - name: Install Android SDK components
         shell: bash
         run: |
@@ -59,9 +54,6 @@ jobs:
         run: |
           set -euxo pipefail
 
-          echo "ANDROID_HOME=${ANDROID_HOME}"
-          echo "ANDROID_NDK_HOME=${ANDROID_NDK_HOME}"
-
           NDK="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
 
           if [ ! -d "$NDK" ]; then
@@ -70,56 +62,26 @@ jobs:
             exit 1
           fi
 
-          echo "NDK=${NDK}"
-
-          echo "CC=${NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang" >> "$GITHUB_ENV"
-          echo "CXX=${NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang++" >> "$GITHUB_ENV"
-          echo "AR=${NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> "$GITHUB_ENV"
           echo "NDK=${NDK}" >> "$GITHUB_ENV"
 
-      # Superultra's source embeds this file with:
-      #
-      #   INCBIN(nnueNet, "nnueweights.bin");
-      #
-      # The repository/tag must therefore provide the exact v2.1 network.
-      #
-      # First use a network already present in the checkout.
-      # If it is absent, obtain the v2.1 source archive and extract
-      # the network from there.
-      - name: Locate Superultra NNUE network
+          echo "CC=${NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang" >> "$GITHUB_ENV"
+
+          echo "CXX=${NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang++" >> "$GITHUB_ENV"
+
+          echo "AR=${NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> "$GITHUB_ENV"
+
+      - name: Verify NNUE network
         shell: bash
         run: |
           set -euxo pipefail
 
-          echo "Searching checkout for nnueweights.bin..."
-
-          find . -type f -name "nnueweights.bin" -print
-
-          if [ -f "src/nnueweights.bin" ]; then
-            echo "Found src/nnueweights.bin"
-            ls -lh src/nnueweights.bin
-            exit 0
+          if [ ! -f "src/nnueweights.bin" ]; then
+            echo "ERROR: src/nnueweights.bin was not found."
+            echo "Your fork should contain the original Superultra NNUE network."
+            exit 1
           fi
 
-          if [ -f "nnueweights.bin" ]; then
-            echo "Found root nnueweights.bin"
-            cp nnueweights.bin src/nnueweights.bin
-            ls -lh src/nnueweights.bin
-            exit 0
-          fi
-
-          echo
-          echo "ERROR: nnueweights.bin is not present in this checkout."
-          echo
-          echo "The Superultra source requires the exact NNUE network."
-          echo "It will NOT be replaced with a Stockfish network."
-          echo
-          echo "Please upload/copy the original Superultra v2.1"
-          echo "nnueweights.bin into:"
-          echo
-          echo "    src/nnueweights.bin"
-          echo
-          exit 1
+          ls -lh src/nnueweights.bin
 
       - name: Build Superultra
         shell: bash
@@ -135,26 +97,49 @@ jobs:
             CXX="$CXX" \
             AR="$AR"
 
-      - name: Inspect binary
+          echo
+          echo "Build directory:"
+          ls -lah
+
+      - name: Locate built binary
         shell: bash
         working-directory: src
         run: |
           set -euxo pipefail
 
-          echo "Built files:"
-          find . -maxdepth 1 -type f -printf '%f %s bytes\n'
+          BINARY="./Superultra-2.1"
+
+          if [ ! -f "$BINARY" ]; then
+            echo "ERROR: Superultra binary was not created."
+
+            echo
+            echo "Possible executable files:"
+            find . -maxdepth 1 -type f -perm -111 -print || true
+
+            echo
+            echo "All files:"
+            ls -lah
+
+            exit 1
+          fi
+
+          chmod +x "$BINARY"
 
           echo
           echo "Binary information:"
-          file superultra || true
+          file "$BINARY"
+
+          echo
+          echo "ELF architecture:"
+          readelf -h "$BINARY" | grep -E "Class|Machine|Type"
 
           echo
           echo "Dynamic dependencies:"
-          readelf -d superultra || true
+          readelf -d "$BINARY" || true
 
           echo
-          echo "Architecture:"
-          readelf -h superultra | grep -E "Class|Machine|Type"
+          echo "Binary size:"
+          ls -lh "$BINARY"
 
       - name: UCI smoke test
         shell: bash
@@ -162,8 +147,10 @@ jobs:
         run: |
           set -euxo pipefail
 
+          BINARY="./Superultra-2.1"
+
           printf 'uci\nisready\nposition startpos\ngo depth 4\nquit\n' \
-            | timeout 30 ./superultra
+            | timeout 30 "$BINARY"
 
       - name: Prepare single binary artifact
         shell: bash
@@ -173,9 +160,11 @@ jobs:
           rm -rf android-artifact
           mkdir -p android-artifact
 
-          cp src/superultra android-artifact/Superultra-Android-ARM64
+          cp "src/Superultra-2.1" \
+             "android-artifact/Superultra-Android-ARM64"
 
-          chmod +x android-artifact/Superultra-Android-ARM64
+          chmod +x \
+            "android-artifact/Superultra-Android-ARM64"
 
           echo "Final artifact:"
           ls -lh android-artifact/Superultra-Android-ARM64
