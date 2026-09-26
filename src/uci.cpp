@@ -2,7 +2,7 @@
 #include <sstream>
 #include <string>
 #include <cstring>
-#include <thread>
+#include "android_thread.h"
 #include "board.h"
 #include "tt.h"
 #include "uci.h"
@@ -10,6 +10,7 @@
 
 int threadCount;
 static Position board;
+static EngineThread searcherThread;
 
 char pieceToChar(Piece p){
     if (p >> 1 == PAWN){
@@ -346,7 +347,6 @@ static void setPos(std::istringstream &iss){
 }
 
 void doLoop(){
-    std::thread searcherThread;
 
     while (1){
         std::string cmd, token; 
@@ -382,7 +382,7 @@ void doLoop(){
             if (searcherThread.joinable()){
                 searcherThread.join();
             }
-            searcherThread = std::thread(beginSearch, board, proccessGo(iss));
+            searcherThread.start(beginSearch, board, proccessGo(iss));
         }
         // The guessed move has been played so switch from ponder search to normal 
         // search (don't reset tm). Also note that the blank gui screen is a result of

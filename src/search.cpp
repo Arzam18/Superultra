@@ -3,14 +3,14 @@
 #include "movescore.h"
 #include "uci.h"
 #include <math.h>
-#include <thread>
+#include "android_thread.h"
 #include <vector>
 #include <cstring>
 #include <memory>
 
 static timeMan tm;
 static uint64 nodeLim;
-static std::vector<std::thread> threads;
+static std::vector<EngineThread> threads;
 static std::vector<SearchData> threadSD;
 static Depth lmrReduction[MAX_PLY + 5][MAX_MOVES_IN_TURN];
 
@@ -934,7 +934,7 @@ void beginSearch(Position board, uciSearchLims lims){
 
     // Launch threadCount - 1 helper threads (start our indexing from 1)
     for (int i = 1; i < threadCount; i++){
-        threads[i] = std::thread(iterativeDeepening, board, std::ref(threadSD[i]), lims.depthLim);
+        threads[i].start(iterativeDeepening, board, std::ref(threadSD[i]), lims.depthLim);
     }
 
     // Launch main thread
