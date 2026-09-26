@@ -4,83 +4,190 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'src/**'
-      - '.github/workflows/android.yml'
+      - "src/**"
+      - ".github/workflows/android.yml"
+
+permissions:
+  contents: read
 
 jobs:
   build-android:
     runs-on: ubuntu-24.04
 
+    env:
+      ANDROID_NDK_VERSION: "27.2.12479018"
+      ANDROID_API: "24"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Install Android NDK 27.2.12479018
+      # Do NOT use android-actions/setup-android@v3 here.
+      # The current GitHub runner already contains the Android SDK,
+      # and setup-android@v3 can try to install the obsolete "tools"
+      # package and fail with:
+      #   Warning: Failed to find package 'tools'
+      - name: Install Android SDK components
         shell: bash
         run: |
-          set -eux
-          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          set -euxo pipefail
+
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+
           if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER="$(command -v sdkmanager)"
+            SDKMANAGER="${ANDROID_HOME}/cmdline-tools/16.0/bin/sdkmanager"
           fi
-          test -x "$SDKMANAGER"
+
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager not found"
+            find "${ANDROID_HOME}" -type f -name sdkmanager -print
+            exit 1
+          fi
+
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" "platform-tools" "platforms;android-24" "build-tools;35.0.0" "ndk;27.2.12479018"
 
-      - name: Locate Android NDK
-        id: ndk
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-${ANDROID_API}" \
+            "build-tools;35.0.0" \
+            "ndk;${ANDROID_NDK_VERSION}"
+
+      - name: Select Android toolchain
         shell: bash
         run: |
-          NDK="$ANDROID_SDK_ROOT/ndk/27.2.12479018"
-          test -x "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++"
-          echo "path=$NDK" >> "$GITHUB_OUTPUT"
+          set -euxo pipefail
 
-      - name: Obtain Superultra NNUE network
+          echo "ANDROID_HOME=${ANDROID_HOME}"
+          echo "ANDROID_NDK_HOME=${ANDROID_NDK_HOME}"
+
+          NDK="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+
+          if [ ! -d "$NDK" ]; then
+            echo "ERROR: Android NDK was not installed"
+            ls -la "${ANDROID_HOME}/ndk" || true
+            exit 1
+          fi
+
+          echo "NDK=${NDK}"
+
+          echo "CC=${NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang" >> "$GITHUB_ENV"
+          echo "CXX=${NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang++" >> "$GITHUB_ENV"
+          echo "AR=${NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> "$GITHUB_ENV"
+          echo "NDK=${NDK}" >> "$GITHUB_ENV"
+
+      # Superultra's source embeds this file with:
+      #
+      #   INCBIN(nnueNet, "nnueweights.bin");
+      #
+      # The repository/tag must therefore provide the exact v2.1 network.
+      #
+      # First use a network already present in the checkout.
+      # If it is absent, obtain the v2.1 source archive and extract
+      # the network from there.
+      - name: Locate Superultra NNUE network
         shell: bash
         run: |
-          set -eux
-          URL="$(gh api repos/A1exL1ang/Superultra/releases/tags/v2.1 \
-            --jq '.assets[] | select(.name == "nnueweights.bin") | .browser_download_url' | head -n1)"
-          test -n "$URL"
-          curl -L --fail --retry 3 "$URL" -o src/nnueweights.bin
-          test "$(stat -c%s src/nnueweights.bin)" -gt 7000000
-        env:
-          GH_TOKEN: ${{ github.token }}
+          set -euxo pipefail
 
-      - name: Build ARM64 NEON
+          echo "Searching checkout for nnueweights.bin..."
+
+          find . -type f -name "nnueweights.bin" -print
+
+          if [ -f "src/nnueweights.bin" ]; then
+            echo "Found src/nnueweights.bin"
+            ls -lh src/nnueweights.bin
+            exit 0
+          fi
+
+          if [ -f "nnueweights.bin" ]; then
+            echo "Found root nnueweights.bin"
+            cp nnueweights.bin src/nnueweights.bin
+            ls -lh src/nnueweights.bin
+            exit 0
+          fi
+
+          echo
+          echo "ERROR: nnueweights.bin is not present in this checkout."
+          echo
+          echo "The Superultra source requires the exact NNUE network."
+          echo "It will NOT be replaced with a Stockfish network."
+          echo
+          echo "Please upload/copy the original Superultra v2.1"
+          echo "nnueweights.bin into:"
+          echo
+          echo "    src/nnueweights.bin"
+          echo
+          exit 1
+
+      - name: Build Superultra
         shell: bash
+        working-directory: src
         run: |
-          set -eux
-          export PATH="${{ steps.ndk.outputs.path }}/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
-          cd src
+          set -euxo pipefail
+
           make clean || true
-          make -B \
-            CXX=aarch64-linux-android24-clang++ \
-            ANDROID=1 \
-            ARCH=android-neon \
-            CXXFLAGS="-std=c++17 -O3 -funroll-loops -ffast-math -ftree-vectorize -ftree-loop-vectorize -Wall -Wextra -flto"
 
-          file Superultra-2.1-android-arm64
-          readelf -h Superultra-2.1-android-arm64 | grep -E 'Class|Machine'
-          readelf -l Superultra-2.1-android-arm64 | grep -i stack || true
+          make \
+            ARCH=android-neon \
+            CC="$CC" \
+            CXX="$CXX" \
+            AR="$AR"
+
+      - name: Inspect binary
+        shell: bash
+        working-directory: src
+        run: |
+          set -euxo pipefail
+
+          echo "Built files:"
+          find . -maxdepth 1 -type f -printf '%f %s bytes\n'
+
+          echo
+          echo "Binary information:"
+          file superultra || true
+
+          echo
+          echo "Dynamic dependencies:"
+          readelf -d superultra || true
+
+          echo
+          echo "Architecture:"
+          readelf -h superultra | grep -E "Class|Machine|Type"
 
       - name: UCI smoke test
         shell: bash
+        working-directory: src
         run: |
-          set -eux
-          cd src
-          printf 'uci\nisready\nposition startpos\ngo depth 4\nquit\n' | ./Superultra-2.1-android-arm64 || true
+          set -euxo pipefail
 
-      - name: Package one binary only
+          printf 'uci\nisready\nposition startpos\ngo depth 4\nquit\n' \
+            | timeout 30 ./superultra
+
+      - name: Prepare single binary artifact
         shell: bash
         run: |
-          set -eux
-          mkdir -p artifact
-          cp src/Superultra-2.1-android-arm64 artifact/Superultra-2.1-android-arm64
+          set -euxo pipefail
 
-      - name: Upload Android ARM64 binary
+          rm -rf android-artifact
+          mkdir -p android-artifact
+
+          cp src/superultra android-artifact/Superultra-Android-ARM64
+
+          chmod +x android-artifact/Superultra-Android-ARM64
+
+          echo "Final artifact:"
+          ls -lh android-artifact/Superultra-Android-ARM64
+
+          echo
+          echo "SHA256:"
+          sha256sum android-artifact/Superultra-Android-ARM64
+
+      - name: Upload Android ARM64 engine
         uses: actions/upload-artifact@v4
         with:
-          name: Superultra-2.1-android-arm64
-          path: artifact/Superultra-2.1-android-arm64
+          name: Superultra-Android-ARM64
+          path: android-artifact/Superultra-Android-ARM64
           if-no-files-found: error
+          compression-level: 0
