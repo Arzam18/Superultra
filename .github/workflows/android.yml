@@ -1,0 +1,83 @@
+name: Build Superultra for Android ARM64 NEON
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'src/**'
+      - '.github/workflows/android.yml'
+
+jobs:
+  build-android:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Android NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK 27.2.12479018
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-24" "build-tools;35.0.0" "ndk;27.2.12479018"
+
+      - name: Locate Android NDK
+        id: ndk
+        shell: bash
+        run: |
+          NDK="$ANDROID_SDK_ROOT/ndk/27.2.12479018"
+          test -x "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++"
+          echo "path=$NDK" >> "$GITHUB_OUTPUT"
+
+      - name: Obtain Superultra NNUE network
+        shell: bash
+        run: |
+          set -eux
+          URL="$(gh api repos/A1exL1ang/Superultra/releases/tags/v2.1 \
+            --jq '.assets[] | select(.name == "nnueweights.bin") | .browser_download_url' | head -n1)"
+          test -n "$URL"
+          curl -L --fail --retry 3 "$URL" -o src/nnueweights.bin
+          test "$(stat -c%s src/nnueweights.bin)" -gt 7000000
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Build ARM64 NEON
+        shell: bash
+        run: |
+          set -eux
+          export PATH="${{ steps.ndk.outputs.path }}/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          cd src
+          make clean || true
+          make -B \
+            CXX=aarch64-linux-android24-clang++ \
+            ANDROID=1 \
+            ARCH=android-neon \
+            CXXFLAGS="-std=c++17 -O3 -funroll-loops -ffast-math -ftree-vectorize -ftree-loop-vectorize -Wall -Wextra -flto"
+
+          file Superultra-2.1-android-arm64
+          readelf -h Superultra-2.1-android-arm64 | grep -E 'Class|Machine'
+          readelf -l Superultra-2.1-android-arm64 | grep -i stack || true
+
+      - name: UCI smoke test
+        shell: bash
+        run: |
+          set -eux
+          cd src
+          printf 'uci\nisready\nposition startpos\ngo depth 4\nquit\n' | ./Superultra-2.1-android-arm64 || true
+
+      - name: Package one binary only
+        shell: bash
+        run: |
+          set -eux
+          mkdir -p artifact
+          cp src/Superultra-2.1-android-arm64 artifact/Superultra-2.1-android-arm64
+
+      - name: Upload Android ARM64 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: Superultra-2.1-android-arm64
+          path: artifact/Superultra-2.1-android-arm64
+          if-no-files-found: error
