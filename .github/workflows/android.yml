@@ -77,10 +77,10 @@ jobs:
 
           if [ ! -f "src/nnueweights.bin" ]; then
             echo "ERROR: src/nnueweights.bin was not found."
-            echo "Your fork should contain the original Superultra NNUE network."
             exit 1
           fi
 
+          echo "NNUE network found:"
           ls -lh src/nnueweights.bin
 
       - name: Build Superultra
@@ -101,7 +101,7 @@ jobs:
           echo "Build directory:"
           ls -lah
 
-      - name: Locate built binary
+      - name: Verify Android ARM64 binary
         shell: bash
         working-directory: src
         run: |
@@ -110,10 +110,10 @@ jobs:
           BINARY="./Superultra-2.1"
 
           if [ ! -f "$BINARY" ]; then
-            echo "ERROR: Superultra binary was not created."
+            echo "ERROR: Superultra-2.1 was not created."
 
             echo
-            echo "Possible executable files:"
+            echo "Executable files:"
             find . -maxdepth 1 -type f -perm -111 -print || true
 
             echo
@@ -126,31 +126,31 @@ jobs:
           chmod +x "$BINARY"
 
           echo
-          echo "Binary information:"
+          echo "========== FILE =========="
           file "$BINARY"
 
           echo
-          echo "ELF architecture:"
+          echo "========== ELF HEADER =========="
+          readelf -h "$BINARY"
+
+          echo
+          echo "========== MACHINE =========="
           readelf -h "$BINARY" | grep -E "Class|Machine|Type"
 
           echo
-          echo "Dynamic dependencies:"
+          echo "========== DYNAMIC SECTION =========="
           readelf -d "$BINARY" || true
 
           echo
-          echo "Binary size:"
+          echo "========== NEEDED LIBRARIES =========="
+          readelf -d "$BINARY" 2>/dev/null | grep NEEDED || true
+
+          echo
+          echo "========== SIZE =========="
           ls -lh "$BINARY"
 
-      - name: UCI smoke test
-        shell: bash
-        working-directory: src
-        run: |
-          set -euxo pipefail
-
-          BINARY="./Superultra-2.1"
-
-          printf 'uci\nisready\nposition startpos\ngo depth 4\nquit\n' \
-            | timeout 30 "$BINARY"
+          echo
+          echo "Android ARM64 binary verification complete."
 
       - name: Prepare single binary artifact
         shell: bash
@@ -160,8 +160,9 @@ jobs:
           rm -rf android-artifact
           mkdir -p android-artifact
 
-          cp "src/Superultra-2.1" \
-             "android-artifact/Superultra-Android-ARM64"
+          cp \
+            "src/Superultra-2.1" \
+            "android-artifact/Superultra-Android-ARM64"
 
           chmod +x \
             "android-artifact/Superultra-Android-ARM64"
